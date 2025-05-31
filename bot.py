@@ -1,248 +1,157 @@
-import os
+# english_learning_bot.py
+
 import sqlite3
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-# إعداد قاعدة البيانات
-def setup_database():
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('''
+# إعدادات المشرف والتوكن
+ADMIN_ID = 5048497546
+BOT_TOKEN = "7717188841:AAFwAGIfcsgcem0fx678cSUK6faKmNUuVWM"
+
+# إنشاء مجلدات للملفات حسب المستوى
+LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+TYPES = ["pdf", "audio", "rules", "stories", "idioms", "podcasts"]
+
+for level in LEVELS:
+    for t in TYPES:
+        os.makedirs(f"content/{level}/{t}", exist_ok=True)
+
+# قاعدة البيانات
+
+def setup_db():
+    conn = sqlite3.connect("bot.db")
+    cur = conn.cursor()
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS tips (
-            id INTEGER PRIMARY KEY,
-            tip TEXT NOT NULL
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT
         )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS rules (
-            id INTEGER PRIMARY KEY,
-            rule TEXT NOT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS resources (
-            id INTEGER PRIMARY KEY,
-            resource_type TEXT NOT NULL,
-            file_path TEXT NOT NULL
-        )
-    ''')
+    """)
     conn.commit()
     conn.close()
 
-# إضافة نصيحة
-def add_tip(tip: str):
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO tips (tip) VALUES (?)', (tip,))
+# إضافة نصيحة جديدة
+
+def add_tip(text):
+    conn = sqlite3.connect("bot.db")
+    cur = conn.cursor()
+    cur.execute("INSERT INTO tips (text) VALUES (?)", (text,))
     conn.commit()
     conn.close()
 
-# إضافة قاعدة
-def add_rule(rule: str):
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO rules (rule) VALUES (?)', (rule,))
-    conn.commit()
-    conn.close()
+# عرض نصائح
 
-# إضافة مورد
-def add_resource(resource_type: str, file_path: str):
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO resources (resource_type, file_path) VALUES (?, ?)', (resource_type, file_path))
-    conn.commit()
-    conn.close()
-
-# عرض النصائح
-def send_tips(update: Update, context: CallbackContext) -> None:
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT tip FROM tips')
-    tips = cursor.fetchall()
-    conn.close()
-
-    if tips:
-        response = '\n\n'.join([tip[0] for tip in tips])
-        update.message.reply_text(response)
+def show_tips(update: Update, context: CallbackContext):
+    conn = sqlite3.connect("bot.db")
+    cur = conn.cursor()
+    cur.execute("SELECT text FROM tips")
+    rows = cur.fetchall()
+    if rows:
+        tips = "\n\n".join([r[0] for r in rows])
+        update.message.reply_text(f"\U0001F4D6 نصائح لتعلم الإنجليزية:\n{tips}")
     else:
         update.message.reply_text("لا توجد نصائح حالياً.")
-
-# عرض القواعد
-def send_rules(update: Update, context: CallbackContext) -> None:
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT rule FROM rules')
-    rules = cursor.fetchall()
     conn.close()
 
-    if rules:
-        response = '\n\n'.join([rule[0] for rule in rules])
-        update.message.reply_text(response)
-    else:
-        update.message.reply_text("لا توجد قواعد حالياً.")
+# أمر إضافة نصيحة (مشرف فقط)
 
-# عرض الموارد
-def send_resources(update: Update, context: CallbackContext) -> None:
-    conn = sqlite3.connect('language_bot.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT resource_type, file_path FROM resources')
-    resources = cursor.fetchall()
-    conn.close()
+def add_tip_cmd(update: Update, context: CallbackContext):
+    if update.effective_user.id != ADMIN_ID:
+        return update.message.reply_text("هذا الأمر للمشرف فقط.")
+    text = " ".join(context.args)
+    if not text:
+        return update.message.reply_text("يرجى كتابة النصيحة بعد الأمر.")
+    add_tip(text)
+    update.message.reply_text("تمت إضافة النصيحة بنجاح.")
 
-    if resources:
-        for resource in resources:
-            if resource[1].endswith('.pdf'):
-                update.message.reply_document(open(resource[1], 'rb'))
-            elif resource[1].endswith(('.mp3', '.wav')):
-                update.message.reply_audio(open(resource[1], 'rb'))
-            elif resource[1].endswith(('.mp4', '.avi')):
-                update.message.reply_video(open(resource[1], 'rb'))
-    else:
-        update.message.reply_text("لا توجد موارد حالياً.")
+# رفع ملفات تعليمية (PDF أو صوتيات وغيرها)
 
-# تحميل الملفات المرسلة
-def handle_document(update: Update, context: CallbackContext) -> None:
-    file = update.message.document.get_file()
-    file_path = os.path.join('downloads', update.message.document.file_name)
-    os.makedirs('downloads', exist_ok=True)
-    file.download(file_path)
-    add_resource('document', file_path)
-    update.message.reply_text('تم حفظ الملف بنجاح!')
+def upload_file(update: Update, context: CallbackContext):
+    if update.effective_user.id != ADMIN_ID:
+        return update.message.reply_text("هذا الأمر للمشرف فقط.")
+    try:
+        level = context.args[0].upper()
+        ftype = context.args[1].lower()
+        if level not in LEVELS or ftype not in TYPES:
+            raise ValueError
+        context.user_data['upload_level'] = level
+        context.user_data['upload_type'] = ftype
+        update.message.reply_text("الرجاء إرسال الملف الآن.")
+    except:
+        update.message.reply_text("يرجى كتابة الأمر بالشكل: /upload A1 pdf")
 
-# دوال الأوامر الخاصة بالإضافة
-def add_tip_command(update: Update, context: CallbackContext) -> None:
-    if context.args:
-        tip = ' '.join(context.args)
-        add_tip(tip)
-        update.message.reply_text('تمت إضافة النصيحة.')
-    else:
-        update.message.reply_text('الرجاء كتابة نصيحة بعد الأمر.')
+# استقبال الملف من المشرف
 
-def add_rule_command(update: Update, context: CallbackContext) -> None:
-    if context.args:
-        rule = ' '.join(context.args)
-        add_rule(rule)
-        update.message.reply_text('تمت إضافة القاعدة.')
-    else:
-        update.message.reply_text('الرجاء كتابة القاعدة بعد الأمر.')
-
-def add_resource_command(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('أرسل الملف مباشرة وسنقوم بحفظه.')
-
-# دوال الأوامر الأخرى
-def group_link(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('للانضمام إلى مجموعة واتساب: https://chat.whatsapp.com/example')
-
-def collocations(update: Update, context: CallbackContext) -> None:
-    if context.args:
-        word = context.args[0]
-        update.message.reply_text(f'Collocations with "{word}":\nmake a decision\ncatch a cold\ntake a risk')
-    else:
-        update.message.reply_text('الرجاء كتابة كلمة بعد الأمر.')
-
-def study_plan(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('خطة دراسية:\n1. قراءة يومية\n2. مشاهدة فيديوهات\n3. محادثة نصف ساعة')
-
-def common_mistakes(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('أخطاء شائعة:\n❌ He do\n✅ He does\n❌ I am agree\n✅ I agree')
-
-def language_resources(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('مواقع مفيدة:\n- Duolingo\n- BBC Learning English\n- EnglishClass101')
-
-def conversation_starters(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('مواضيع للنقاش:\n- السفر\n- التكنولوجيا\n- الثقافة')
-
-def grammar_exercises(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('تمارين نحوية:\n- Exercise 1: Present Simple\n- Exercise 2: Past Tense')
-
-def cultural_facts(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('حقائق:\n🇬🇧 البريطانيون يشربون أكثر من 165 مليون كوب شاي يومياً!')
-
-def listening_exercises(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('تمارين استماع:\n- VOA Learning English\n- TED Talks')
-
-def writing_tips(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('نصائح للكتابة:\n- راجع القواعد\n- استخدم جمل قصيرة\n- تجنب التكرار')
-
-def idiomatic_expressions(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('تعبيرات اصطلاحية:\n- Break the ice\n- Hit the books\n- Under the weather')
-
-def language_exchange(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('يمكنك العثور على شريك لغة عبر مواقع مثل: Tandem, HelloTalk')
-
-def study_groups(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('مجموعات الدراسة تُنظم كل أسبوع. انضم لمجموعتنا على Telegram!')
-
-def news(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('📰 خبر اليوم:\nScientists discover new English dialect in Antarctica!')
-
-def language_jokes(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('😂 نكتة:\nWhy did the verb break up with the noun?\nBecause they had no agreement!')
-
-def progress_check(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('📊 لتقييم تقدمك:\n- هل تحسّن نطقك؟\n- هل تستطيع فهم محادثة كاملة؟')
-
-# دالة البدء
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('أهلاً بك في بوت معهد اللغة الإنجليزية! استخدم الأوامر التالية:\n'
-                              '/add_tip - لإضافة نصيحة\n'
-                              '/add_rule - لإضافة قاعدة\n'
-                              '/add_resource - لإضافة ملف\n'
-                              '/tips - لعرض النصائح\n'
-                              '/rules - لعرض القواعد\n'
-                              '/resources - لعرض الموارد\n'
-                              '/join_group - الانضمام للمجموعة\n'
-                              '/collocations [كلمة] - تعبيرات شائعة\n'
-                              '/study_plan - خطة دراسية\n'
-                              '/common_mistakes - أخطاء شائعة\n'
-                              '/language_resources - موارد تعليمية\n'
-                              '/conversation_starters - مواضيع للنقاش\n'
-                              '/grammar_exercises - تمارين نحوية\n'
-                              '/cultural_facts - حقائق ثقافية\n'
-                              '/listening_exercises - تمارين استماع\n'
-                              '/writing_tips - نصائح كتابة\n'
-                              '/idiomatic_expressions - تعبيرات اصطلاحية\n'
-                              '/language_exchange - تبادل لغوي\n'
-                              '/study_groups - مجموعات دراسة\n'
-                              '/news - أخبار\n'
-                              '/language_jokes - نكات\n'
-                              '/progress_check - تقييم التقدم')
-
-# تشغيل البوت
-def main():
-    setup_database()
-    TOKEN = os.environ.get("7717188841:AAFwAGIfcsgcem0fx678cSUK6faKmNUuVWM")
-    if not TOKEN:
-        print("❌ لم يتم العثور على التوكن. تأكد من ضبط متغير البيئة BOT_TOKEN.")
+def handle_file(update: Update, context: CallbackContext):
+    if update.effective_user.id != ADMIN_ID:
         return
+    level = context.user_data.get("upload_level")
+    ftype = context.user_data.get("upload_type")
+    if not level or not ftype:
+        return update.message.reply_text("يرجى استخدام الأمر /upload أولاً.")
+    file = update.message.document or update.message.audio
+    if not file:
+        return update.message.reply_text("لم يتم اكتشاف ملف صالح.")
+    file_path = f"content/{level}/{ftype}/{file.file_name}"
+    file.get_file().download(file_path)
+    update.message.reply_text("تم حفظ الملف بنجاح.")
+    context.user_data.clear()
 
-    updater = Updater(TOKEN)
+# عرض محتوى معين من المستوى
+
+def show_content(update: Update, context: CallbackContext):
+    try:
+        level = context.args[0].upper()
+        ftype = context.args[1].lower()
+        path = f"content/{level}/{ftype}"
+        if not os.path.exists(path):
+            raise ValueError
+        files = os.listdir(path)
+        if not files:
+            return update.message.reply_text("لا يوجد محتوى بعد.")
+        for fname in files:
+            with open(os.path.join(path, fname), "rb") as f:
+                update.message.reply_document(f)
+    except:
+        update.message.reply_text("يرجى استخدام الأمر بالشكل: /get A1 pdf")
+
+# أوامر عامة
+
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("""
+\U0001F44B مرحباً بك في بوت تعليم الإنجليزية!
+اختر أمراً:
+/start - هذه الرسالة
+/tips - عرض نصائح
+/add_tip [النصيحة] - إضافة نصيحة (للمشرف)
+/upload [المستوى] [نوع] - رفع ملف (للمشرف)
+/get [المستوى] [نوع] - عرض محتوى
+/info - نبذة عن المعهد وصانع البوت
+    """)
+
+def info(update: Update, context: CallbackContext):
+    update.message.reply_text("""
+\U0001F393 معهد لوس أنجلوس لتعلم اللغة الإنجليزية
+نوفر محتوى تعليمي تفاعلي شامل من المستوى A1 إلى C2.
+
+صانع البوت: أ. أحمد - متخصص في تصميم أنظمة تعليمية رقمية.
+    """)
+
+# إعداد الكود الأساسي
+
+def main():
+    setup_db()
+    updater = Updater(BOT_TOKEN)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("add_tip", add_tip_command))
-    dp.add_handler(CommandHandler("add_rule", add_rule_command))
-    dp.add_handler(CommandHandler("add_resource", add_resource_command))
-    dp.add_handler(CommandHandler("tips", send_tips))
-    dp.add_handler(CommandHandler("rules", send_rules))
-    dp.add_handler(CommandHandler("resources", send_resources))
-    dp.add_handler(CommandHandler("join_group", group_link))
-    dp.add_handler(CommandHandler("collocations", collocations))
-    dp.add_handler(CommandHandler("study_plan", study_plan))
-    dp.add_handler(CommandHandler("common_mistakes", common_mistakes))
-    dp.add_handler(CommandHandler("language_resources", language_resources))
-    dp.add_handler(CommandHandler("conversation_starters", conversation_starters))
-    dp.add_handler(CommandHandler("grammar_exercises", grammar_exercises))
-    dp.add_handler(CommandHandler("cultural_facts", cultural_facts))
-    dp.add_handler(CommandHandler("listening_exercises", listening_exercises))
-    dp.add_handler(CommandHandler("writing_tips", writing_tips))
-    dp.add_handler(CommandHandler("idiomatic_expressions", idiomatic_expressions))
-    dp.add_handler(CommandHandler("language_exchange", language_exchange))
-    dp.add_handler(CommandHandler("study_groups", study_groups))
-    dp.add_handler(CommandHandler("news", news))
-    dp.add_handler(CommandHandler("language_jokes", language_jokes))
-    dp.add_handler(CommandHandler("progress_check", progress_check))
-    dp.add_handler(MessageHandler(Filters.document, handle_document))
+    dp.add_handler(CommandHandler("info", info))
+    dp.add_handler(CommandHandler("tips", show_tips))
+    dp.add_handler(CommandHandler("add_tip", add_tip_cmd))
+    dp.add_handler(CommandHandler("upload", upload_file))
+    dp.add_handler(CommandHandler("get", show_content))
+    dp.add_handler(MessageHandler(Filters.document | Filters.audio, handle_file))
 
     updater.start_polling()
     updater.idle()
