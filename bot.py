@@ -211,7 +211,7 @@ def start(update: Update, context: CallbackContext) -> None:
 # تشغيل البوت
 def main():
     setup_database()
-    TOKEN = os.environ.get("BOT_TOKEN")
+    TOKEN = os.environ.get("7717188841:AAFwAGIfcsgcem0fx678cSUK6faKmNUuVWM")
     if not TOKEN:
         print("❌ لم يتم العثور على التوكن. تأكد من ضبط متغير البيئة BOT_TOKEN.")
         return
